@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>WebGL을 이용한 3D 지구 지형 모델링</title>
+<style>
+@page{size:A4;margin:16mm 18mm 17mm}*{box-sizing:border-box}body{margin:0;color:#111;font-family:Arial,"Apple SD Gothic Neo",sans-serif;font-size:10.5pt;line-height:1.65}h1,h2,h3{color:#111;break-after:avoid}h1{font-size:22pt;margin:0 0 7mm;text-align:center}h2{font-size:16pt;margin:8mm 0 3mm;border-bottom:1px solid #888;padding-bottom:1.5mm}h3{font-size:12.5pt;margin:5mm 0 2mm}p{margin:0 0 3.2mm;text-align:justify}.cover{min-height:260mm;display:flex;flex-direction:column;align-items:center}.subtitle{font-size:13pt;font-weight:600;margin-bottom:7mm}.hero{width:94%;margin:2mm auto 7mm;border:1px solid #bbb}.meta{width:86%;margin-top:2mm}.pagebreak{break-before:page}.flow{text-align:center;font-weight:700;letter-spacing:.2px;margin:5mm 0;padding:3mm;background:#f1f3f5}.code{font-family:Menlo,Consolas,monospace;font-size:8.6pt;white-space:pre-wrap;background:#f3f3f3;padding:2.6mm 3mm;margin:3mm 0 4mm;border-left:3px solid #555}table{width:100%;border-collapse:collapse;margin:3mm 0 5mm;break-inside:avoid}th,td{border:1px solid #d1d1d1;padding:2.2mm 2.5mm;vertical-align:middle}th{background:#23577f;color:#fff;text-align:center}tbody tr:nth-child(even){background:#f3f6f8}.figure{width:100%;margin:3mm auto 1mm;display:block}.caption{text-align:center;font-size:9pt;font-style:italic;margin-bottom:5mm}.small{font-size:9pt}.refs{font-size:8.2pt;line-height:1.3}.refs li{margin-bottom:1mm;overflow-wrap:anywhere}.note{font-weight:600}.footer-space{height:4mm}
+</style>
+</head>
+<body>
+<section class="cover">
+  <h1>WebGL을 이용한 3D 지구 지형 모델링</h1>
+  <div class="subtitle">컴퓨터 그래픽스 과제 보고서</div>
+  <img class="hero" src="../figures/result.png" alt="WebGL 지구 실행 화면">
+  <table class="meta">
+    <tr><th>항목</th><th>내용</th></tr>
+    <tr><td>학번</td><td>32232182</td></tr>
+    <tr><td>이름</td><td>석민</td></tr>
+    <tr><td>제출일</td><td>2026년 11월 27일</td></tr>
+    <tr><td>GitHub</td><td>https://github.com/stone0min/webgl-earth-terrain</td></tr>
+  </table>
+</section>
+
+<section class="pagebreak">
+<h2>1 과제 목표</h2>
+<p>이 과제의 목표는 WebGL2로 지구를 3차원 모델링하고, 위도와 경도에 연결된 실제 고도값을 구 표면의 변위로 바꾸어 지형을 표현하는 것이다. 지구는 계속 자전하며 광원도 별도의 속도로 이동한다. 사용자는 회전 속도, 고도 배율, 조명 속도를 바꾸고 마우스로 관찰 방향을 조절할 수 있다.</p>
+<table>
+<tr><th>요구 사항</th><th>구현 내용</th></tr>
+<tr><td>3D 지구 모델링</td><td>위도 180분할, 경도 360분할의 구 메시를 WebGL2 삼각형으로 생성</td></tr>
+<tr><td>고도 정보 사용</td><td>NOAA ETOPO 2022 Ice Surface 고도값을 1도 간격으로 추출하여 사용</td></tr>
+<tr><td>위도 경도 좌표</td><td>각 메시 정점의 위도와 경도로 고도 격자를 조회하고 쌍선형 보간</td></tr>
+<tr><td>회전 운동</td><td>시간 간격을 누적해 Y축 회전 행렬을 매 프레임 갱신</td></tr>
+<tr><td>조명 변화</td><td>광원 위치를 원 궤도로 이동시키고 주변광 확산광 정반사광 계산</td></tr>
+<tr><td>사용자 조작</td><td>회전 속도 고도 배율 조명 속도 정지 초기화 마우스 드래그 제공</td></tr>
+</table>
+
+<h2>2 전체 설계</h2>
+<p>프로그램은 데이터 준비, 구 메시 생성, GPU 전송, 셰이더 계산, 애니메이션 갱신 순서로 실행된다. 원본 CSV는 제출 프로젝트 안에 보관하고, 브라우저가 빠르게 읽을 수 있도록 16비트 정수 배열로 변환한 파일을 함께 사용한다.</p>
+<div class="flow">ETOPO CSV → 1도 고도 배열 → 위경도 보간 → 구 정점 변위 → 조명 계산 → 화면 출력</div>
+
+<h3>2.1 구 메시 생성</h3>
+<p>위도 φ와 경도 θ를 라디안으로 바꾼 뒤 단위 구의 좌표를 계산했다. 위도는 -90도에서 90도, 경도는 -180도에서 180도 범위로 나누었다. 인접한 네 정점을 두 개의 삼각형으로 연결하므로 전체 표면이 연속된 삼각형 메시가 된다.</p>
+<div class="code">x = cos(φ) sin(θ)    y = sin(φ)    z = cos(φ) cos(θ)</div>
+<p>180 × 360 격자를 사용할 때 정점은 181 × 361개가 만들어진다. 인덱스 버퍼를 사용해 여러 삼각형이 같은 정점을 다시 사용하도록 구성했다.</p>
+
+<h3>2.2 고도 데이터</h3>
+<p>NOAA NCEI의 ETOPO 2022 60 arc-second Ice Surface 자료를 사용했다. 이 자료는 전 지구의 육지 지형과 해저 지형을 미터 단위로 제공한다. ERDDAP 요청에서 위도와 경도 방향의 stride를 60으로 지정해 약 1도 간격의 180 × 360 격자를 얻었다.</p>
+<table>
+<tr><th>속성</th><th>값</th></tr>
+<tr><td>자료명</td><td>ETOPO 2022 v1 60 arc-second Global Ice Surface</td></tr>
+<tr><td>제공 기관</td><td>NOAA National Centers for Environmental Information</td></tr>
+<tr><td>수평 좌표계</td><td>WGS 84 지리 좌표계 EPSG 4326</td></tr>
+<tr><td>수직 기준</td><td>EGM2008 EPSG 3855</td></tr>
+<tr><td>고도 단위</td><td>meter</td></tr>
+<tr><td>프로젝트 표본 간격</td><td>위도 1도 경도 1도</td></tr>
+<tr><td>표본 수</td><td>64,800개</td></tr>
+</table>
+</section>
+
+<section class="pagebreak">
+<h3>2.3 고도 보간과 정점 변위</h3>
+<p>구 메시의 정점이 ETOPO 표본과 정확히 같은 위치에 놓이지 않을 수 있으므로 주변 네 고도값을 쌍선형 보간했다. 경도는 0도와 360도 경계를 순환하도록 처리했고 위도는 자료 범위 안으로 제한했다. 보간한 고도는 지구 반지름에 비해 매우 작기 때문에 화면에서는 고도 배율을 적용한다.</p>
+<div class="code">p' = normalize(p) × (1 + h_normalized × heightScale)</div>
+<p>육지는 8,849 m를 기준으로 정규화하고 해저는 별도 깊이 비율로 정규화했다. 고도 배율 슬라이더가 0이면 완전한 구가 되고 값을 올리면 산맥과 해저 굴곡이 강조된다.</p>
+
+<h2>3 구현 과정</h2>
+<h3>3.1 데이터 변환</h3>
+<p>ERDDAP에서 받은 CSV의 각 행은 위도, 경도, 고도 순서다. build-data.js는 고도를 반올림해 Int16Array로 저장한 다음 Base64 문자열로 변환한다. 브라우저는 etopo-data.js를 읽고 다시 Int16Array로 복원한다. 원본 CSV 약 3 MB를 매번 파싱하지 않기 때문에 초기 실행 시간이 줄어든다.</p>
+<div class="code">const values = new Int16Array(src.length);
+values[i] = Math.round(Number(src[i].split(',')[2]));</div>
+
+<h3>3.2 WebGL 버퍼</h3>
+<p>각 정점에는 기본 위치, 법선, 정규화된 고도, 육지 여부를 저장한다. 정점 셰이더의 location 0부터 3까지 네 속성을 연결했고, 인덱스 버퍼에는 삼각형을 이루는 정점 번호를 저장했다. 깊이 검사를 켜서 지구 뒷면이 앞면 위에 그려지지 않게 했다.</p>
+<table>
+<tr><th>속성</th><th>구성</th><th>용도</th></tr>
+<tr><td>aPos</td><td>vec3</td><td>고도 적용 전 단위 구 좌표</td></tr>
+<tr><td>aNormal</td><td>vec3</td><td>조명 계산용 표면 법선</td></tr>
+<tr><td>aHeight</td><td>float</td><td>정규화된 육지 고도 또는 해저 깊이</td></tr>
+<tr><td>aLand</td><td>float</td><td>육지와 바다 색상 선택</td></tr>
+</table>
+
+<h3>3.3 셰이더와 색상</h3>
+<p>정점 셰이더는 고도와 사용자가 지정한 배율로 정점을 구의 바깥쪽 또는 안쪽으로 이동시킨다. 프래그먼트 셰이더는 해저 깊이를 짙은 파랑에서 얕은 파랑으로, 육지 고도를 초록에서 갈색과 흰색으로 바꾼다. 텍스처 이미지를 붙이는 방식이 아니라 각 정점의 실제 고도값으로 색을 계산한다.</p>
+<p>조명은 주변광, Lambert 확산광, Phong 방식의 정반사광을 합성했다. 확산광의 밝기는 법선 n과 광원 방향 l의 내적 max(dot(n, l), 0)으로 정한다. 광원이 지구 뒤쪽에 있으면 내적이 0에 가까워져 밤 영역이 어두워진다.</p>
+
+<h3>3.4 회전과 조명 변화</h3>
+<p>requestAnimationFrame이 전달하는 시각을 이용해 이전 프레임과의 시간 차를 계산한다. 지구 회전각과 광원 회전각은 서로 다른 속도로 누적되므로 지구가 회전하는 동안 낮과 밤의 경계도 계속 변한다.</p>
+<div class="code">earthAngle += deltaTime × spinSpeed
+lightAngle += deltaTime × lightSpeed</div>
+
+<h3>3.5 사용자 입력</h3>
+<p>세 개의 슬라이더는 회전 속도, 고도 배율, 조명 속도를 변경한다. 회전 정지 버튼은 지구의 자전만 멈추며 광원 이동은 계속된다. 초기화 버튼은 시점과 속도를 처음 값으로 되돌린다. 캔버스에서 포인터를 드래그하면 yaw와 pitch가 바뀌어 지구를 원하는 방향에서 볼 수 있다.</p>
+</section>
+
+<section class="pagebreak">
+<h2>4 실행 결과</h2>
+<p>Chrome의 WebGL2 환경에서 프로그램을 실행했다. ETOPO 고도값에서 계산한 해안선 때문에 아프리카, 남아메리카, 아시아 등의 윤곽이 나타났고 히말라야와 고원 지역은 갈색과 밝은색으로 표시되었다. 해저 깊이도 파란색 농도와 반지름 변화에 반영되었다.</p>
+<img class="figure" src="../figures/result.png" alt="WebGL 실행 결과">
+<div class="caption">그림 1 ETOPO 2022 고도값을 적용한 WebGL 실행 화면</div>
+<h3>4.1 기능 확인</h3>
+<table>
+<tr><th>검사 항목</th><th>확인 방법</th><th>결과</th></tr>
+<tr><td>WebGL2 초기화</td><td>페이지 실행 후 콘솔 오류 확인</td><td>정상</td></tr>
+<tr><td>지구 회전</td><td>회전 속도를 0과 60으로 변경</td><td>속도 변화 확인</td></tr>
+<tr><td>고도 변화</td><td>고도 배율을 0과 100으로 변경</td><td>표면 굴곡 변화 확인</td></tr>
+<tr><td>조명 변화</td><td>조명 속도를 0과 60으로 변경</td><td>밝은 영역 이동 확인</td></tr>
+<tr><td>회전 정지</td><td>정지 버튼을 두 번 선택</td><td>정지와 재시작 확인</td></tr>
+<tr><td>시점 조절</td><td>캔버스를 상하좌우로 드래그</td><td>관찰 방향 변화 확인</td></tr>
+<tr><td>초기화</td><td>값 변경 후 초기화 선택</td><td>초기 설정 복원 확인</td></tr>
+</table>
+
+<h2>5 결과 분석과 한계</h2>
+<p>실제 고도 데이터를 구 표면의 좌표와 직접 연결했기 때문에 대륙의 형태와 고도가 일관되게 나타났다. 회전과 광원 이동을 분리해 자전과 조명 변화를 동시에 확인할 수 있었고, 고도 배율을 조절해 거의 구형인 실제 지구와 지형을 강조한 화면을 비교할 수 있다.</p>
+<p>프로젝트에서는 실행 속도와 파일 크기를 고려해 60 arc-second 원 자료를 1도 간격으로 표본화했다. 따라서 작은 섬이나 좁은 산맥은 원 자료보다 세부 정보가 줄어든다. 또한 지구 반지름에 대한 실제 고도 비율은 화면에서 거의 보이지 않으므로 사용자가 선택한 배율로 굴곡을 확대한다. 이 배율은 지형을 보기 위한 시각화 값이며 실제 축척과 다르다.</p>
+</section>
+
+<section class="pagebreak">
+<h2>6 파일 구성과 실행 방법</h2>
+<table>
+<tr><th>파일</th><th>역할</th></tr>
+<tr><td>index.html</td><td>캔버스와 조작 화면</td></tr>
+<tr><td>style.css</td><td>화면 배치와 기본 스타일</td></tr>
+<tr><td>app.js</td><td>메시 생성 셰이더 행렬 조명 애니메이션</td></tr>
+<tr><td>etopo-data.js</td><td>브라우저가 읽는 1도 간격 고도 배열</td></tr>
+<tr><td>data/etopo2022_1deg.csv</td><td>NOAA ERDDAP에서 추출한 원본 표본</td></tr>
+<tr><td>build-data.js</td><td>CSV를 Int16 고도 배열로 변환</td></tr>
+<tr><td>README.md</td><td>실행법과 구현 설명</td></tr>
+</table>
+<p>프로젝트 폴더에서 다음 명령을 실행한 다음 브라우저에서 http://localhost:8000을 연다. HTML 파일을 직접 열면 브라우저 보안 정책 때문에 일부 기능이 제한될 수 있으므로 로컬 웹 서버를 사용한다.</p>
+<div class="code">python3 -m http.server 8000</div>
+
+<h2>7 AI 도구 사용 내역</h2>
+<p>ChatGPT를 사용해 WebGL 구현 초안을 작성하고, 셰이더와 행렬 계산 오류를 점검했으며, 보고서의 구성을 정리했다. AI 도구를 사용한 이유는 WebGL의 정점 버퍼와 셰이더 연결 과정에서 발생할 수 있는 오류를 빠르게 찾고 구현 과정을 문서화하기 위해서다.</p>
+<p>과제 요구 사항을 정리한 뒤 코드 초안을 만들었다. 브라우저에서 검은 화면이 나타나는 문제를 확인하고 이동 행렬의 원소 수 오류를 수정했다. 이후 직접 작성한 고도값 대신 NOAA ETOPO 2022 자료를 내려받아 적용하고, 콘솔 오류와 조작 기능을 다시 확인했다. 제출 전에는 작성자가 위경도 좌표 변환, 고도 보간, 정점 변위, 조명 내적 계산을 직접 검토해야 한다.</p>
+
+<h2>8 참고 자료</h2>
+<ol class="refs">
+<li>NOAA National Centers for Environmental Information. ETOPO Global Relief Model. https://www.ncei.noaa.gov/products/etopo-global-relief-model</li>
+<li>NOAA Pacific Islands Fisheries Science Center ERDDAP. ETOPO 2022 v1 60 arc-second Global Ice Surface. https://oceanwatch.pifsc.noaa.gov/erddap/griddap/ETOPO_2022_v1_60s.html</li>
+<li>MDN Web Docs. Lighting in WebGL. https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/Tutorial/Lighting_in_WebGL</li>
+</ol>
+</section>
+</body>
+</html>

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WebGL 3D 지구 지형</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <h1>WebGL 3D 지구 지형</h1>
+    <section class="panel">
+      <canvas id="gl" width="900" height="620"></canvas>
+      <div class="controls">
+        <label>회전 속도 <input id="spin" type="range" min="0" max="60" value="18"><output id="spinValue">18</output></label>
+        <label>고도 배율 <input id="height" type="range" min="0" max="100" value="55"><output id="heightValue">55</output></label>
+        <label>조명 속도 <input id="light" type="range" min="0" max="60" value="12"><output id="lightValue">12</output></label>
+        <button id="pause" type="button">회전 정지</button>
+        <button id="reset" type="button">초기화</button>
+      </div>
+      <p id="status">마우스로 드래그하면 시점을 바꿀 수 있습니다.</p>
+    </section>
+  </main>
+  <script src="etopo-data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
